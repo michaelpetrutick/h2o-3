@@ -23,7 +23,7 @@ import java.util.Comparator;
 public final class ComputationState {
   final boolean _intercept;
   final int _nclasses;
-  private final GLMParameters _parms;
+  public final GLMParameters _parms;  // I need to access family in parms to find if regression is ordinal
   private BetaConstraint _bc;
   final double _alpha;
   double[] _ymu;

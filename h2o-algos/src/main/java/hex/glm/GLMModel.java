@@ -271,7 +271,9 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
       if (_family == Family.ordinal) {
         if (_intercept == false)
           throw new IllegalArgumentException("Ordinal regression must have intercepts.  _intercept must be true.");
-
+        if (_solver == Solver.COORDINATE_DESCENT || _solver == Solver.COORDINATE_DESCENT_NAIVE)
+          throw new IllegalArgumentException("Ordinal regression parameters are not separable for the intercepts.  " +
+                  "COORDINATE_DESCENT and COORDINATE_DESCENT_NAIVE are not allowed.");
       }
       if(_link != Link.family_default) { // check we have compatible link
         switch (_family) {
@@ -443,7 +445,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
       }
     }
 
-    public final double linkInv(double x) {
+    public final double linkInv(double x) { // for ordinal logit, x here is eta
       switch(_link) {
 //        case multinomial: // should not be used
         case identity:
@@ -471,7 +473,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
       }
     }
 
-    public final double linkInvDeriv(double x) {
+    public final double linkInvDeriv(double x) {  // for ordinal logit, x here is CDF
       switch(_link) {
         case identity:
           return 1;
@@ -480,7 +482,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
           double gg = (g + 1) * (g + 1);
           return g / gg;
         case ologit:
-          return (x-x*x);
+          return (x-x*x); // just the multiplier part
         case log:
           //return (x == 0)?MAX_SQRT:1/x;
           return Math.max(Math.exp(x), Double.MIN_NORMAL);
@@ -570,6 +572,7 @@ public class GLMModel extends Model<GLMModel,GLMModel.GLMParameters,GLMModel.GLM
     public final double linkDeriv(double x) { // note: compute an inverse of what R does
       switch(_link) {
         case ologit:  // note, x is CDF not PDF
+          return (x*(1-x));
         case logit:
 //        case multinomial:
           double div = (x * (1 - x));

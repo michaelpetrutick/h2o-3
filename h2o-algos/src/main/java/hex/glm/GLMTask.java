@@ -941,8 +941,8 @@ public abstract class GLMTask  {
         } else {  // perform update for response between 1 to K-2, y can affect class y and y-1
           yJ = _glmp.linkInv(tempEtas[y]);
           yJm1 = _glmp.linkInv(tempEtas[y-1]);
-          double num = yJ*yJ-yJ;
-          double numJm1 = yJm1-yJm1*yJm1;
+          double num = -_glmp.linkInvDeriv(_glmp.linkInv(tempEtas[y])); // yJ*yJ-yJ;
+          double numJm1 = _glmp.linkInvDeriv(_glmp.linkInv(tempEtas[y-1])); // yJm1-yJm1*yJm1;
           double den = yJ-yJm1;
           int lastC = y-1;  // previous class
           etasOffset[row][y] = num/den;
@@ -1724,6 +1724,53 @@ public abstract class GLMTask  {
           sumExp += Math.exp(_etas[i]-maxrow);
       _maxRowChunk.set(r.cid,_etas[_c]);
       _sumExpChunk.set(r.cid,Math.exp(_etas[_c]-maxrow)/sumExp);
+    }
+  }
+
+  public static class GLMOrdinalUpdate extends FrameTask2<GLMOrdinalUpdate> {
+    private final double [][] _beta; // updated  value of beta
+    private final int _c;
+    private transient double [] _sparseOffsets;
+    private transient double [] _etas;
+    private final GLMParameters _params;
+    private final int _previousC;
+
+    public GLMOrdinalUpdate(DataInfo dinfo, Key jobKey, double [] beta, int c, GLMParameters params) {
+      super(null, dinfo, jobKey);
+      _beta = ArrayUtils.convertTo2DMatrix(beta,dinfo.fullN()+1);
+      _c = c;
+      _params = params;
+      _previousC = c-1;
+    }
+
+    @Override public void chunkInit(){
+      // initialize
+      _sparseOffsets = MemoryManager.malloc8d(_beta.length);
+      _etas = MemoryManager.malloc8d(_beta.length);
+      if(_sparse) {
+        for(int i = 0; i < _beta.length; ++i)
+          _sparseOffsets[i] = GLM.sparseOffset(_beta[i],_dinfo);
+      }
+    }
+
+    private transient Chunk _etaCChunk;
+    private transient Chunk _probCChunk;
+    private transient Chunk _probPCChunk;
+
+    @Override public void map(Chunk [] chks) {
+      _etaCChunk = chks[chks.length-3];
+      _probCChunk = chks[chks.length-2];
+      _probPCChunk = chks[chks.length-1];
+      super.map(chks);
+    }
+
+    @Override
+    protected void processRow(Row r) {
+      double etaC = r.innerProduct(_beta[_c]) + _sparseOffsets[_c];
+      double etaPC = r.innerProduct(_beta[_previousC]) + _sparseOffsets[_previousC];
+      _etaCChunk.set(r.cid, etaC);
+      _probCChunk.set(r.cid,_params.linkInv(etaC));
+      _probPCChunk.set(r.cid,_params.linkInv(etaPC));
     }
   }
 

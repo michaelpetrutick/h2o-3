@@ -677,7 +677,9 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
       double [] beta = _state.betaMultinomial();
       do {
         beta = beta.clone();
-        for (int c = 0; c < _nclass; ++c) {
+        boolean ordinalReg = _state._parms._family==Family.ordinal;
+        int classIterNum = ordinalReg?_nclass-1:_nclass;
+        for (int c = 0; c < classIterNum; ++c) {
           boolean onlyIcpt = _state.activeDataMultinomial(c).fullN() == 0;
           _state.setActiveClass(c);
           LineSearchSolver ls = (_state.l1pen() == 0)
@@ -685,7 +687,10 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
             : new SimpleBacktrackingLS(_state.gslvrMultinomial(c), _state.betaMultinomial(c,beta), _state.l1pen());
           GLMWeightsFun glmw = new GLMWeightsFun(_parms);
           long t1 = System.currentTimeMillis();
-          new GLMMultinomialUpdate(_state.activeDataMultinomial(), _job._key, beta, c).doAll(_state.activeDataMultinomial()._adaptedFrame);
+          if (ordinalReg)
+            new GLMOrdinalUpdate(_state.activeDataMultinomial(), _job._key, beta, c, _state._parms).doAll(_state.activeDataMultinomial()._adaptedFrame);
+          else
+            new GLMMultinomialUpdate(_state.activeDataMultinomial(), _job._key, beta, c).doAll(_state.activeDataMultinomial()._adaptedFrame);
           long t2 = System.currentTimeMillis();
           ComputationState.GramXY gram = _state.computeGram(ls.getX(),s);
           long t3 = System.currentTimeMillis();
@@ -699,6 +704,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
           _state.setBetaMultinomial(c, beta,ls.getX());
           // update multinomial
           Log.info(LogMsg("computed in " + (t2 - t1) + "+" + (t3 - t2) + "+" + (t4 - t3) + "+" + (t5 - t4) + "=" + (t5 - t1) + "ms, step = " + ls.step() + ((_lslvr != null) ? ", l1solver " + _lslvr : "")));
+
         }
         _state.setActiveClass(-1);
       } while(progress(beta,_state.gslvr().getGradient(beta)));
@@ -1095,10 +1101,8 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
       switch (solver) {
         case COORDINATE_DESCENT: // fall through to IRLSM
         case IRLSM:
-          if(_parms._family == Family.multinomial)
+          if(_parms._family == Family.multinomial || _parms._family == Family.ordinal)
             fitIRLSM_multinomial(solver);
-          else if (_parms._family == Family.ordinal)
-            fitIRLSM_ordinal_default(solver);
           else if(_parms._family == Family.gaussian && _parms._link == Link.identity)
             fitLSM(solver);
           else
@@ -1192,7 +1196,7 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         if (_parms._lambda_search) {  // need train and test deviance, only "the best" submodel will be fully scored
           double trainDev = _state.deviance() / _nobs;
           double testDev = Double.NaN;
-          if (_validDinfo != null) {
+          if (_validDinfo != null) {;
             if (_parms._family == Family.ordinal)
               testDev = new GLMResDevTaskOrdinal(_job._key, _validDinfo, _dinfo.denormalizeBeta(_state.beta()), _nclass).doAll(_validDinfo._adaptedFrame).avgDev();
             else
@@ -1247,17 +1251,20 @@ public class GLM extends ModelBuilder<GLMModel,GLMParameters,GLMOutput> {
         int N = _dinfo.fullN()+1;
         for(int i = 1; i < _nclass; ++i)
           sumExp += Math.exp(nb[i*N + P] - maxRow);
-        Vec[] vecs = _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
+        Vec[] vecs = _parms._family == Family.ordinal?_dinfo._adaptedFrame.anyVec().makeDoubles(3, new double[]{sumExp, sumExp, maxRow}):
+                _dinfo._adaptedFrame.anyVec().makeDoubles(2, new double[]{sumExp, maxRow});
+
         if (_parms._lambda_search && _parms._is_cv_model) {
           Scope.untrack(vecs[0]._key, vecs[1]._key);
           removeLater(vecs[0]._key, vecs[1]._key);
         }
 
-
-        if (_parms._family == Family.ordinal)
-          _dinfo.addResponse(new String[]{"__glm_ExpC", "__glm_ExpNPC"}, vecs); // ordinal uses these too
-        else
-          _dinfo.addResponse(new String[]{"__glm_sumExp", "__glm_maxRow"}, vecs); // ordinal uses these too
+        if (_parms._family == Family.ordinal) {
+          Scope.untrack(vecs[2]._key);
+          removeLater(vecs[2]._key);
+          _dinfo.addResponse(new String[]{"__glm_etaC", "__glm_ProbC", "__glm_ProbPC"}, vecs); // store prob for class C and C-1
+        } else
+          _dinfo.addResponse(new String[]{"__glm_sumExp", "__glm_maxRow"}, vecs);
       }
       double oldDevTrain = _nullDevTrain;
       double oldDevTest = _nullDevTest;
